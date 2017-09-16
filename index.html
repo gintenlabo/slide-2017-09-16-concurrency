@@ -1,0 +1,340 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+    <title>reveal.js</title>
+
+    <link rel="stylesheet" href="css/reveal.css">
+    <link rel="stylesheet" href="css/theme/black.css">
+
+    <!-- Theme used for syntax highlighting of code -->
+    <link rel="stylesheet" href="lib/css/zenburn.css">
+
+    <!-- Printing and PDF exports -->
+    <script>
+      var link = document.createElement( 'link' );
+      link.rel = 'stylesheet';
+      link.type = 'text/css';
+      link.href = window.location.search.match( /print-pdf/gi ) ? 'css/print/pdf.css' : 'css/print/paper.css';
+      document.getElementsByTagName( 'head' )[0].appendChild( link );
+    </script>
+  </head>
+  <body>
+    <div class="reveal">
+      <div class="slides">
+        <section data-markdown data-separator="^\n---$" data-separator-vertical="^\n>>>$">
+          <script type="text/template">
+## C++ 並行プログラミング入門
+
+齋藤 昂也
+
+---
+### C++って？
+- - -
+- 特徴
+    - C との互換性を重視している
+    - ゼロオーバーヘッド原則
+        - （上手く書けば）速い
+    - 静的型付け言語
+        - （上手く書けば）エラーをコンパイル時に検出できる
+
+---
+### C++って？
+- - -
+- 特徴つづき
+    - 言語組み込みのGCがない
+    - 未定義動作
+    - 上手く書かないと恩恵を受けづらい
+    - むずかしい
+
+---
+### std::thread
+
+---
+### std::thread
+- - -
+- 標準ライブラリの一部（`#include <thread>` で使用可能）
+- 新しいスレッドの作成・管理をするクラス
+- コンストラクタで渡した関数を別スレッドで実行してくれる
+
+>>>
+### std::thread
+- - -
+```C++
+int x = 0, y = 0;
+
+// 新しいスレッドで実行する
+std::thread t([&] { // ラムダ式
+    ++x;
+}):
+--y;
+t.join(); // 実行したスレッドの終了を待つ
+
+assert(x == 1 && y == -1);
+```
+
+>>>
+### std::thread
+- - -
+- `std::thread` オブジェクトが実行中の場合、破棄される前に `join` または `detach` しなければならない
+- `std::thread` で実行中の関数から例外が投げられた場合、 `std::terminate` が呼ばれてプログラムが終了する
+- `std::thread` の実行結果の値を返したい場合、工夫が必要になる
+
+---
+### std::async
+
+---
+### std::async
+- - -
+- 標準ライブラリの一部（`#include <future>` で使用可能）
+- 関数を渡すと、それを非同期実行してくれる関数
+- `std::thread` と違い、例外や戻り値を扱える
+
+>>>
+### std::async
+- - -
+```C++
+std::future<int> f = std::async(std::launch::async, [] {
+    int sum = 0;
+    for (int i = 1; i <= 100; ++i) {
+        sum += i;
+    }
+    return sum;
+});
+// 何か別の処理
+int result = f.get();
+std::cout << result << std::endl;
+```
+
+>>>
+### std::async
+- - -
+```C++
+std::future<int> f = std::async(std::launch::async, []() -> int {
+    throw std::runtime_error("error!");
+});
+int result = f.get(); // ここで例外が投げられる
+```
+
+---
+### std::mutex
+
+---
+### std::mutex
+- - -
+- 標準ライブラリの一部（`#include <mutex>` で使用可能）
+- `std::lock_guard` や `std::unique_lock` と組み合わせ、排他処理を行うクラス
+
+>>>
+### std::mutex
+- - -
+```C++
+std::vector<int> data;
+std::mutex m;
+auto f = [&] (int value) {
+    int result = some_heavy_function(value);
+    {
+        std::lock_guard<std::mutex> lock(m);
+        data.push_back(result);
+    }
+};
+std::thread t1([&] { f(1); });
+std::thread t2([&] { f(2); });
+t1.join();
+t2.join();
+```
+
+>>>
+### std::mutex
+- - -
+```C++
+std::vector<int> v = {1, 2, 3, 4, 5, 6, 7, 8};
+std::mutex m;
+std::vector<std::future<int>> futures;
+for (int i = 0; i < 4; ++i) {
+    futures.push_back(std::async(std::launch::async, [&] {
+        int sum = 0;
+        for (;;) {
+            std::unique_lock<std::mutex> lock(m);
+            if (v.empty()) {
+                return sum;
+            }
+            int value = v.back();
+            v.pop_back();
+            lock.unlock(); // 途中でアンロックできる！
+
+            sum += value;
+        }
+    }));
+}
+int sum = 0;
+for (auto& f : futures) {
+    sum += f.get();
+}
+```
+
+---
+### std::atomic
+
+---
+### std::atomic
+- - -
+- 標準ライブラリの一部（`#include <atomic>` で使用可能）
+- atomic （操作の途中に割り込み不可）な変数
+- 整数型、ポインタ型に対応
+
+>>>
+### std::atomic
+- - -
+```C++
+int counter = 0;
+std::vector<std::thread> threads;
+for (int i = 0; i < 10; ++i) {
+    threads.emplace_back([&counter] {
+        for (int j = 0; j < 100; ++j) {
+            counter += 1;
+        }
+    });
+}
+for (auto& t : threads) {
+    t.join();
+}
+std::cout << counter << std::endl; // 1000になるとは限らない
+```
+
+>>>
+### std::atomic
+- - -
+```C++
+std::atomic<int> counter(0);
+std::vector<std::thread> threads;
+for (int i = 0; i < 10; ++i) {
+    threads.emplace_back([&counter] {
+        for (int j = 0; j < 100; ++j) {
+            counter += 1;
+        }
+    });
+}
+for (auto& t : threads) {
+    t.join();
+}
+std::cout << counter.load() << std::endl; // 1000になる
+```
+
+>>>
+### std::atomic
+- - -
+- 使用にコツが要るので、慣れないうちは mutex を使った方がいい
+
+---
+### std::condition_variable
+
+---
+### std::condition_variable
+- - -
+- 標準ライブラリの一部（`#include <condition_variable>` で使用可能）
+- 特定のイベントもしくは条件を満たすまでスレッドの実行を待機するためのクラス
+
+>>>
+### std::condition_variable
+- - -
+```C++
+bool done = false;
+std::queue<std::function<void()>> q;
+std::mutex m;
+std::condition_variable cond;
+std::vector<std::thread> threads;
+
+for (int i = 0; i < 4; ++i) {
+    threads.emplace_back([&] {
+        for (;;) {
+            std::unique_lock<std::mutex> lock(m);
+            while (q.empty()) {
+                if (done) {
+                    return;
+                }
+                cond.wait(lock);
+            }
+            auto f = std::move(q.front());
+            q.pop();
+            lock.unlock();
+
+            f();
+        }
+    });
+}
+
+auto enqueue_task = [&] (std::function<void()> f) {
+    {
+        std::lock_guard<std::mutex> lock(m);
+        q.push(std::move(f));
+    }
+    cond.notify_one();
+};
+
+enqueue_task([] { some_function1(); });
+enqueue_task([] { some_function2(); });
+// and so on...
+
+// 後処理
+{
+    std::lock_guard<std::mutex> lock(m);
+    done = true;
+}
+cond.notify_all();
+
+for (auto& t : threads) {
+    t.join();
+}
+```
+
+---
+### 並列アルゴリズム
+
+---
+### 並列アルゴリズム
+- - -
+- C++17 の新機能（既存のコンパイラには未実装）
+- `<algorithm>` 等のヘッダに定義された関数（`std::for_each` など）の一部に並列実行ポリシーを指定可能に
+- `std::execution::seq`（順序実行）、 `std::execution::par`（並列実行）など
+- 実際にマルチスレッドで実行されるかどうかは実装依存
+
+>>>
+### 並列アルゴリズム
+- - -
+```C++
+std::vector<int> v = {1, 2, 3, 4, 5};
+std::atomic<int> sum(0);
+std::for_each(std::execution::par, v.begin(), v.end(), [&] (int x) {
+    sum += x;
+});
+```
+
+---
+### 終わり
+
+          </script>
+        </section>
+      </div>
+    </div>
+
+    <script src="lib/js/head.min.js"></script>
+    <script src="js/reveal.js"></script>
+
+    <script>
+      // More info about config & dependencies:
+      // - https://github.com/hakimel/reveal.js#configuration
+      // - https://github.com/hakimel/reveal.js#dependencies
+      Reveal.initialize({
+        dependencies: [
+          { src: 'plugin/markdown/marked.js' },
+          { src: 'plugin/markdown/markdown.js' },
+          { src: 'plugin/notes/notes.js', async: true },
+          { src: 'plugin/highlight/highlight.js', async: true, callback: function() { hljs.initHighlightingOnLoad(); } }
+        ]
+      });
+    </script>
+  </body>
+</html>
